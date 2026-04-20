@@ -15,16 +15,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name:       - name: Build with Buildozer
+      - name:      - name: Build with Buildozer
         run: |
           # Intentamos la compilación con logs detallados
           buildozer -v android debug || (tail -n 100 buildozer.log && exit 1)
 
-        run: |
-          # Damos permisos al usuario para que pueda trabajar dentro del contenedor
-          chown -R user .
-          # Ejecutamos la compilación
-          yes | buildozer -v android debug
         
       - name: Upload APK
         uses: actions/upload-artifact@v4
