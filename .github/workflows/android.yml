@@ -1,26 +1,19 @@
 name: Build APK
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Usamos un contenedor que ya tiene TODO instalado (Android SDK, NDK, dependencias...)
-    container:
-      image: kivy/buildozer:latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name:      - name: Build with Buildozer
-        run: |
-          # Intentamos la compilación con logs detallados
-          buildozer -v android debug || (tail -n 100 buildozer.log && exit 1)
+      - name: Build with Buildozer
+        uses: ArtemSerebriakov/buildozer-action@v1
+        with:
+          buildozer_version: master
+          workdir: .
+          python_version: 3.11
 
-        
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
