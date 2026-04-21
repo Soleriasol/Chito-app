@@ -7,13 +7,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build with Buildozer (Docker Directo)
-        run: |
-          # Usamos la imagen oficial de Kivy para compilar
-          docker run --rm \
-            -v "$(pwd)":/home/buildozer/host \
-            -v "$(pwd)"/.buildozer:/home/buildozer/.buildozer \
-            kivy/buildozer android debug
+      - name: Build with Buildozer
+        uses: action-pack/buildozer@v1
+        with:
+          python_version: 3.11
+          buildozer_version: master
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
