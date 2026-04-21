@@ -7,13 +7,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build with Buildozer
-        uses: action-pack/buildozer@v1
-        with:
-          python_version: 3.11
-          buildozer_version: master
+      - name: Instalación manual de herramientas
+        run: |
+          # Intentamos actualizar con reintentos para evitar el Error 100
+          sudo apt-get update || sudo apt-get update
+          sudo apt-get install -y build-essential git python3 python3-dev zip unzip zlib1g-dev libltdl-dev libffi-dev libssl-dev autoconf automake libtool pkg-config cmake
+          pip install --upgrade pip
+          pip install --user --upgrade buildozer Cython==0.29.33
 
-      - name: Upload APK
+      - name: Crear la APK
+        run: |
+          # Usamos el comando directo de buildozer instalado en el paso anterior
+          export PATH=$PATH:$HOME/.local/bin
+          yes | buildozer -v android debug
+        
+      - name: Guardar el archivo
         uses: actions/upload-artifact@v4
         with:
           name: Chito-APK
