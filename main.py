@@ -4,95 +4,211 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.clock import Clock
+from kivy.graphics import Color, RoundedRectangle
 from kivy.core.window import Window
 import webbrowser
-import requests
+import time
+import random
 from plyer import tts, stt
+from kivy import platform
+from google import genai
+from google.genai import types
 
-# CONFIGURACIÓN DE IA
+# CONFIGURACIÓN DE PERMISOS ANDROID
+if platform == 'android':
+    from android.permissions import request_permissions, Permission
+
+# CONFIGURACIÓN DE IA (GEMINI)
 GEMINI_API_KEY = "AIzaSyCxPZWWsjLv5HoZZZijr8cpN9F91pLyoek" 
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+class RoundedButton(Button):
+    def __init__(self, **kwargs):
+        super(RoundedButton, self).__init__(**kwargs)
+        self.background_normal = ''
+        self.background_color = (0, 0, 0, 0)
+        self.color = (1, 1, 1, 1)
+        self.bind(pos=self.update_canvas, size=self.update_canvas)
+
+    def update_canvas(self, *args):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            Color(0.1, 0.6, 0.8, 1)
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[20])
 
 class ChitoMobile(App):
     def build(self):
-        self.always_listening = False
-        self.keep_awake() # Evita que la pantalla se apague sola
+        self.title = 'Chito Assistant'
+        Window.clearcolor = (0.05, 0.05, 0.1, 1) # Fondo oscuro premium
         
+        if platform == 'android':
+            request_permissions([
+                Permission.RECORD_AUDIO,
+                Permission.INTERNET
+            ])
+
+        # Configurar callbacks de voz (forma fiable en Android)
+        stt.result_callback = self.on_stt_results
+        stt.error_callback = self.on_stt_error
+
         layout = BoxLayout(orientation='vertical', padding=40, spacing=30)
-        self.status_label = Label(text="Chito Pro v1.1\nServicio de fondo activo", font_size='22sp', halign='center')
+        
+        # Header / Status
+        self.status_label = Label(
+            text="Hola, soy Chito\n¿En qué puedo ayudarte?", 
+            font_size='22sp', 
+            halign='center',
+            color=(0.9, 0.9, 1, 1),
+            line_height=1.2
+        )
         layout.add_widget(self.status_label)
         
-        self.mic_button = Button(text="HABLAR CON CHITO", size_hint=(1, 0.4))
+        # Main Microphone Button
+        self.mic_button = RoundedButton(
+            text="HABLAR CON CHITO",
+            size_hint=(1, 0.4),
+            font_size='24sp',
+            bold=True
+        )
         self.mic_button.bind(on_release=self.start_listening)
         layout.add_widget(self.mic_button)
         
-        self.loop_button = Button(text="MODO SIEMPRE ACTIVO: OFF", size_hint=(1, 0.2))
-        self.loop_button.bind(on_release=self.toggle_loop)
-        layout.add_widget(self.loop_button)
+        # Footer
+        footer = Label(
+            text="Asistente Personal Inteligente",
+            font_size='12sp',
+            color=(0.4, 0.4, 0.6, 1),
+            size_hint_y=None,
+            height=40
+        )
+        layout.add_widget(footer)
         
         return layout
 
-    def on_start(self):
-        # EXCLUSIVO ANDROID: Arranca el servicio de escucha de fondo
-        try:
-            from jnius import autoclass
-            # IMPORTANTE: El nombre del servicio debe coincidir con buildozer.spec
-            # Kivy genera el nombre como: org.domain.appname.ServiceServicename
-            Service = autoclass('org.alberto.chitoai.ServiceChitoservice')
-            mActivity = autoclass('org.kivy.android.PythonActivity').mActivity
-            Service.start(mActivity, "")
-            print("Servicio de fondo iniciado con éxito.")
-        except Exception as e:
-            print(f"No se pudo iniciar el servicio: {e}")
+    def on_stt_results(self, results):
+        if results:
+            command = results[0].lower()
+            self.status_label.text = f"Has dicho: {command}"
+            Clock.schedule_once(lambda dt: self.process_command(command))
+        else:
+            self.status_label.text = "No te he escuchado bien."
+        Clock.schedule_once(lambda dt: self.reset_ui())
 
-    def keep_awake(self):
-        try:
-            from jnius import autoclass
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            current_activity = PythonActivity.mActivity
-            WindowManager = autoclass('android.view.WindowManager$LayoutParams')
-            current_activity.getWindow().addFlags(WindowManager.FLAG_KEEP_SCREEN_ON)
-        except: pass
+    def on_stt_error(self, error):
+        print(f"STT Error: {error}")
+        self.status_label.text = f"Error de voz: {error}"
+        Clock.schedule_once(lambda dt: self.reset_ui())
 
-    def toggle_loop(self, *args):
-        self.always_listening = not self.always_listening
-        self.loop_button.text = f"SIEMPRE ACTIVO: {'ON' if self.always_listening else 'OFF'}"
-        if self.always_listening: self.start_listening()
+    def reset_ui(self):
+        self.mic_button.disabled = False
+        self.mic_button.text = "HABLAR CON CHITO"
 
     def talk(self, text):
+        print(f"Chito: {text}")
         self.status_label.text = text
-        try: tts.speak(text)
-        except: pass
-        if self.always_listening: Clock.schedule_once(self.start_listening, 4)
+        try:
+            tts.speak(text)
+        except Exception as e:
+            print(f"Error TTS: {e}")
 
     def start_listening(self, *args):
-        self.status_label.text = "Escuchando..."
+        self.status_label.text = "Escuchando...\n(Habla ahora)"
+        self.mic_button.text = "ESCUCHANDO..."
+        self.mic_button.disabled = True
         try:
             stt.start()
-            Clock.schedule_once(self.check_results, 5)
-        except: self.talk("Error de micro")
+            # Timeout de seguridad por si no hay respuesta del sistema en 15 segundos
+            Clock.schedule_once(self.stt_timeout, 15)
+        except Exception as e:
+            self.status_label.text = f"Error: {str(e)}"
+            self.talk("No he podido activar el micrófono.")
+            self.reset_ui()
 
-    def check_results(self, dt):
-        if stt.results: self.process_command(stt.results[0].lower())
-        elif self.always_listening: Clock.schedule_once(self.start_listening, 1)
+    def stt_timeout(self, dt):
+        if self.mic_button.disabled and self.mic_button.text == "ESCUCHANDO...":
+            self.reset_ui()
+            self.status_label.text = "Tiempo de espera agotado."
+
+    def ask_ai(self, prompt):
+        try:
+            self.status_label.text = "Pensando..."
+            system_prompt = (
+                "Eres Chito, un asistente personal móvil cercano. "
+                "Tus respuestas deben ser breves, naturales y sin markdown. "
+                "Responde como si estuviéramos hablando en persona."
+            )
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    tools=[types.Tool(google_search_retrieval=types.GoogleSearchRetrieval())]
+                )
+            )
+            return response.text.replace("*", "").strip()
+        except Exception as e:
+            print(f"Error IA: {e}")
+            return "Perdona, mi cerebro está desconectado ahora mismo."
 
     def process_command(self, command):
-        # Comandos de Spotify
-        if 'spotify' in command or 'música' in command:
-            self.talk("Poniendo Spotify")
-            webbrowser.open("spotify:")
-            Clock.schedule_once(self.android_play_music, 4)
+        print(f"Usuario: {command}")
+        
+        # Lista completa de contactos sincronizada
+        contacts = {
+            "Mamá": "+34636769415",
+            "Papá": "+34680511331",
+            "Mi niña": "+34666486471",
+            "Alansio": "+34690906807",
+            "Alicia": "+34600713634",
+            "Oso": "+34650443200",
+            "Soler": "+34659712796",
+            "Oliva": "+34686656233",
+            "Abuela": "+34390172663",
+            "Abuelo": "+34617250062",
+            "cristian": "+34641334097",
+            "Javier": "+34640828440"
+        }
+
+        # Lógica de WhatsApp (Android Intent)
+        if any(word in command for word in ['mensaje', 'whatsapp', 'escribe', 'wasap']):
+            for name, number in contacts.items():
+                if name.lower() in command:
+                    self.talk(f"Abriendo WhatsApp para {name}")
+                    webbrowser.open(f"whatsapp://send?phone={number}")
+                    return
+
+        # Lógica de Llamada (Android Intent)
+        if any(word in command for word in ['llama', 'llamada', 'teléfono']):
+            for name, number in contacts.items():
+                if name.lower() in command:
+                    self.talk(f"Llamando a {name}")
+                    webbrowser.open(f"tel:{number}")
+                    return
+
+        # Lógica de Spotify
+        if any(word in command for word in ['spotify', 'música', 'reproduce', 'pon', 'escuchar']):
+            query = ""
+            for word in ['pon la canción', 'pon el álbum', 'pon', 'busca', 'reproduce', 'escuchar']:
+                if word in command:
+                    potential_query = command.split(word)[-1].strip()
+                    if potential_query and potential_query not in ['música', 'canción']:
+                        query = potential_query
+                        break
+            
+            if query:
+                self.talk(f"Buscando {query} en Spotify.")
+                self.android_search_spotify(query)
+            else:
+                self.talk("Abriendo Spotify y dándole al play.")
+                webbrowser.open("spotify:")
+                Clock.schedule_once(lambda dt: self.android_play_music(), 4)
             return
 
-        # Comandos de Radio
-        if 'radio' in command or 'emisora' in command:
-            estacion = command.replace('radio', '').replace('pon', '').strip()
-            self.talk(f"Poniendo {estacion}")
-            webbrowser.open(f"https://www.google.com/search?q=escuchar+{estacion}+en+directo")
-            return
+        # Si no es un comando directo, IA (Gemini)
+        respuesta = self.ask_ai(command)
+        self.talk(respuesta)
 
-        self.talk(self.ask_ai(command))
-
-    def android_play_music(self, dt):
+    def android_play_music(self):
         try:
             from jnius import autoclass
             KeyEvent = autoclass('android.view.KeyEvent')
@@ -100,19 +216,29 @@ class ChitoMobile(App):
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             current_activity = PythonActivity.mActivity
             intent = Intent(Intent.ACTION_MEDIA_BUTTON)
-            intent.putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY))
+            ev_down = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY)
+            intent.putExtra(Intent.EXTRA_KEY_EVENT, ev_down)
             current_activity.sendOrderedBroadcast(intent, None)
-            intent.putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY))
+            ev_up = KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY)
+            intent.putExtra(Intent.EXTRA_KEY_EVENT, ev_up)
             current_activity.sendOrderedBroadcast(intent, None)
-        except: pass
+        except:
+            print("No es Android o falta jnius")
 
-    def ask_ai(self, prompt):
+    def android_search_spotify(self, query):
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-            data = {"contents": [{"parts":[{"text": f"Responde breve en español: {prompt}"}]}]}
-            response = requests.post(url, json=data, timeout=8)
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        except: return "Problema de conexión."
+            from jnius import autoclass
+            Intent = autoclass('android.content.Intent')
+            MediaStore = autoclass('android.provider.MediaStore')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            current_activity = PythonActivity.mActivity
+            intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            intent.putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            intent.putExtra(MediaStore.QUERY, query)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            current_activity.startActivity(intent)
+        except:
+            webbrowser.open(f"spotify:search:{query}")
 
 if __name__ == '__main__':
     ChitoMobile().run()
